@@ -1,70 +1,86 @@
-# Detection Engine — Technical Reference
+# Detection Engine — Four Triggers, No Black Box
 
-## Model Architecture
+## Overview
 
-### Hybrid CNN-LSTM
+The Marsham Edge detection engine uses four independent trigger mechanisms operating simultaneously on every incoming time-series window. An alert issues only when two or more triggers fire simultaneously — eliminating single-sensor noise as a source of false alarms.
 
-The primary detection model combines:
+---
 
-- **CNN layers**: Extract local patterns and feature representations from time-series windows
-- **LSTM layers**: Capture temporal dependencies and long-range correlations
-- **Output**: Anomaly probability score (0–1) with confidence interval
+## The Four Triggers
 
-```python
-model = Sequential([
-    Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(window, features)),
-    MaxPooling1D(pool_size=2),
-    LSTM(units=70, return_sequences=True, dropout=0.1),
-    LSTM(units=70, dropout=0.1),
-    Dense(1, activation='sigmoid')
-])
-```
+### Trigger A — Statistical Envelope
 
-### Ensemble
+**Mechanism:** 95% confidence envelope calculated on an expanding window of historical readings.
 
-For robustness, the CNN-LSTM is run alongside:
+**What it catches:** Gradual drift. A signal that slowly moves outside the established normal range — the kind of degradation that is invisible to threshold-based systems because it never crosses any single line, but represents a clear departure from baseline.
 
-- **XGBoost**: Gradient boosting on lagged features (n_lags=60)
-- **Random Forest**: 500-tree ensemble, depth-limited to prevent overfitting
+**Limitation:** By design, Trigger A cannot catch sudden events — the expanding window takes time to establish a stable envelope. For sudden events, see Triggers C and D.
 
-Ensemble vote weights: CNN-LSTM 60%, XGBoost 25%, RF 15%
+---
 
-## Training Pipeline
+### Trigger B — Rate Density Threshold
 
-1. **Ingestion**: Argo validates and certifies the dataset
-2. **Feature engineering**: 60-period lagged features, rolling statistics
-3. **Normalisation**: Z-score per sensor channel
-4. **Train/val split**: 80/20 time-series aware split
-5. **Hyperparameter tuning**: Grid search via Modal async jobs (A10 GPU)
-6. **Model storage**: Weights stored in Modal's persistent volume
+**Mechanism:** Counts the number of threshold-crossing events within a rolling time window. If the density of crossings exceeds a calibrated rate, Trigger B fires.
 
-## Anomaly Scoring
+**What it catches:** Sustained acceleration phases — the period before a failure where a system is not yet in the critical zone but is crossing minor thresholds with increasing frequency. This is the signature of a system under stress that has not yet broken.
 
-An anomaly is flagged when:
+**Physical interpretation:** In thermal systems, this corresponds to the exothermic runaway phase before temperature becomes obviously anomalous. In mechanical systems, it corresponds to micro-fracture propagation.
 
-```
-score > threshold AND confidence_interval_lower > threshold * 0.85
-```
+---
 
-Default threshold: `0.65` (configurable per deployment)
+### Trigger C — Geometric Second-Derivative Spike
 
-## Supported Signal Types
+**Mechanism:** Computes the second derivative of the signal across the window. If the second derivative exceeds a threshold — i.e., if the rate of change is itself changing rapidly — Trigger C fires.
 
-| Domain | Signal | Sampling Rate |
-|--------|--------|--------------|
-| Li-ion thermal | Cell temperature, voltage delta, current | 1 Hz |
-| Li-ion thermal | Gas sensor (CO, H2) | 0.1 Hz |
-| Occupational | Ambient temperature, humidity | 0.017 Hz |
-| Occupational | Noise exposure (dB) | 1 Hz |
-| Occupational | Particulate matter (PM2.5, PM10) | 0.1 Hz |
+**What it catches:** Abrupt inflection points. Sudden-onset events: a valve failure, an equipment impact, a short circuit. The geometric second derivative detects the moment a signal changes character, not just magnitude.
 
-## Performance Benchmarks
+---
 
-| Model | Precision | Recall | F1 | Latency |
-|-------|-----------|--------|-----|---------|
-| CNN-LSTM | 0.91 | 0.88 | 0.89 | 0.8s |
-| XGBoost | 0.87 | 0.84 | 0.85 | 0.1s |
-| Random Forest | 0.85 | 0.81 | 0.83 | 0.2s |
-| Ensemble | 0.93 | 0.90 | 0.91 | 1.1s |
+### Trigger D — Physics-Informed ODE Residual (Key Advance)
 
-Benchmarked on held-out industrial test sets. GPU inference via Modal T4.
+**Mechanism:** A physics-informed ordinary differential equation model generates a prediction for what the signal *should* be doing based on first-principles physical behaviour of the monitored system. The residual — the gap between predicted and observed — is monitored continuously. If the residual exceeds calibration bounds, Trigger D fires.
+
+**What it catches:** Anomalies that precede detectable statistical or geometric change. Because the ODE model encodes physical law, not historical statistics, it can detect physically implausible states before those states generate measurable acceleration.
+
+**Why this matters:** Trigger D catches the event before it looks like an event. This is the trigger that enables the Prevention Simulator — because if you can detect anomaly before acceleration begins, you have time to intervene before any of the other three triggers have fired.
+
+**Example:** In a Li-ion battery cell undergoing early-stage thermal runaway, internal resistance changes are physically predictable from temperature and current. An ODE model of the electrochemical system can detect implausible internal-resistance trajectories minutes before cell temperature becomes statistically anomalous.
+
+---
+
+## False-Alarm Architecture
+
+**Two-trigger confirmation required.**
+
+No single trigger, however confident, generates an alert. Two independent triggers must fire simultaneously within the same time window. This means:
+
+- A noisy sensor that trips Trigger A sporadically cannot generate alerts alone
+- A single abrupt reading that trips Trigger C without Trigger D confirmation is logged but not escalated
+- The system tolerates single-channel sensor degradation without alarm fatigue
+
+---
+
+## Five-State Risk Machine
+
+| State | Trigger Count | Risk Level | Action |
+|-------|--------------|------------|--------|
+| Stable | 0 | 0% | Normal operation. Baseline updates continuously. |
+| Explanation Needed | 1 | 25% | Logged. Monitored. No escalation. |
+| **Watching Brief** | **2** | **50%** | **First actionable alert. Prevention Simulator activates.** |
+| High Risk | 3 | 75% | Urgent escalation to operations team. |
+| Critical | 4 | 100% | Immediate intervention required. |
+
+**The Watching Brief state is the most operationally significant.** It is the first state at which intervention can prevent escalation to High Risk or Critical. The Prevention Simulator runs automatically at this state, modelling what corrective actions would return the system to Stable.
+
+---
+
+## Prevention Simulator
+
+When the system reaches Watching Brief, the Prevention Simulator:
+
+1. Takes the current four-trigger state as input
+2. Runs forward simulation of the physical model under three intervention scenarios: (a) no action, (b) standard mitigation, (c) aggressive mitigation
+3. Returns a probability distribution for the risk state at T+30min, T+60min, T+120min for each scenario
+4. Delivers the simulation results to Deb for inclusion in the analyst briefing
+
+The client receives: current state, trigger attribution, intervention options with modelled outcomes, and a recommendation — all within the briefing delivered by Deb.
