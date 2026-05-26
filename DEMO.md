@@ -19,11 +19,11 @@ This system detects *excess heat generation* — the physical precursor — befo
 - **Trigger A** — flags when temperature or voltage leaves its historical statistical envelope (expanding window, ±3σ prediction interval)
 - **Trigger B** — flags sustained rate-of-change above threshold for more than half of a rolling window
 - **Trigger C** — flags abrupt curvature spikes (second-derivative inflection)
-- **Trigger D** — fits Newton's law of cooling () on normal operating data and flags when actual heating deviates more than 3σ from the physics prediction
+- **Trigger D** — fits Newton's law of cooling (`dT/dt = a - b*(T - T_amb)`) on normal operating data and flags when actual heating deviates more than 3σ from the physics prediction
 
 A **Watching Brief alert** (the first actionable state) requires *two independent triggers simultaneously* — one noisy sensor cannot generate an alarm alone.
 
-**Why Trigger D leads:** During a developing thermal event, the internal heat generation term () rises before the temperature itself has climbed significantly. Trigger D detects this deviation from normal thermal physics directly, firing well before the statistical triggers can accumulate evidence of acceleration.
+**Why Trigger D leads:** During a developing thermal event, the internal heat generation term rises before the temperature itself has climbed significantly. Trigger D detects this deviation from normal thermal physics directly, firing well before the statistical triggers can accumulate evidence of acceleration.
 
 **Validated on synthetic chemistry traces:**
 
