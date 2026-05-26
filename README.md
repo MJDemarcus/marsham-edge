@@ -63,7 +63,7 @@ Every alert is attributed to a specific trigger. Every decision is auditable. Th
 
 ## Academic Validation
 
-Core architecture independently validated by **NUS / ComfortDelGro** (Project #2420-0002, supervised by Prof. Jussi Keppo, March 2025) on **35,424 real Singapore NEMS electricity market records**:
+Core architecture independently validated on **35,424 real Singapore NEMS electricity market records**:
 
 | Component | Metric | Result |
 |-----------|--------|--------|
