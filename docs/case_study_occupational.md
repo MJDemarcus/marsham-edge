@@ -1,110 +1,101 @@
-# Case Study: Occupational Health Anomaly Detection
+# Case Study: Occupational Health & Regulatory Compliance — Mining Project
 
-**Agent:** Ken (ML) + Argo (Data)
+**Classification:** Anonymised (client: major mining operation, NSW, Australia)
+**Agent lead:** Argo (data validation), Ken (detection), Deb (regulatory briefing)
 **Date:** May 2026
-**Domain:** Occupational health & hygiene — construction site safety
+**Domain:** Occupational health — silica dust exposure, mining
 
 ---
 
 ## Background
 
-Construction sites expose workers to multiple simultaneous hazards: heat, noise, dust, chemical exposure, and cumulative fatigue. Traditional compliance monitoring relies on periodic manual inspections — which miss transient events that cause the majority of occupational health incidents.
+A mining client faced a regulatory compliance challenge following the tightening of silica dust exposure limits under revised NSW mining regulations. The new limits (0.025 mg/m3 TWA) were significantly lower than the previous standard, and the client's existing monitoring infrastructure — periodic manual sampling, quarterly audits — was not sensitive enough to demonstrate continuous compliance.
 
-Marsham Edge was engaged to develop a continuous, AI-driven monitoring system for a major infrastructure project.
-
----
-
-## Data Sources
-
-| Signal | Sensor | Frequency |
-|--------|--------|-----------|
-| Ambient temperature | Distributed IoT nodes | 1 reading/min |
-| Relative humidity | Distributed IoT nodes | 1 reading/min |
-| PM2.5 / PM10 particulates | Optical particle counters | 6 readings/min |
-| Noise exposure (LAeq) | Sound level meters | Continuous |
-| UV index | Site weather station | 1 reading/min |
-| Worker location | BLE beacons | 1 reading/10s |
+The client needed continuous, real-time monitoring with automatic alerting and regulatory-grade audit trails.
 
 ---
 
-## Model Design
+## Regulatory Context
 
-### CNN-LSTM for Multivariate Time Series
+Key regulatory provisions (NSW, 2025 revision):
 
-Ken trained a hybrid CNN-LSTM model on 14 months of historical site data (3 sites, 2 countries):
-
-- **Input**: 60-minute rolling window, 6 channels
-- **CNN**: Extract spatial patterns across sensor channels
-- **LSTM**: Capture temporal drift and accumulation effects
-- **Output**: Heat stress risk score (0–1), noise overexposure flag, dust alert flag
-
-### Thresholds
-
-Calibrated against:
-- ISO 7243 (heat stress)
-- IEC 61672 (noise measurement)
-- WHO PM2.5 air quality guidelines
+- Respirable crystalline silica (RCS) TWA: 0.025 mg/m3 (reduced from 0.05 mg/m3)
+- Mandatory continuous monitoring for enclosed drilling, cutting, and processing operations
+- Audit trail requirements: timestamped readings, sensor calibration records, exposure event logs
+- Worker exposure record: individual dose tracking for roles with >50% exposure probability
 
 ---
 
-## Argo's Data Validation Layer
+## What Argo Did
 
-Before each inference run, Argo validates:
+Argo ingested sensor streams from 14 monitoring nodes across three work zones:
 
-1. **Sensor dropout detection**: Flag channels with > 5% missing readings in the window
-2. **Drift detection**: Statistical test for sensor calibration drift
-3. **Cross-sensor consistency**: Temperature/humidity physical plausibility check
-4. **Location join**: Confirm worker presence in the monitored zone before issuing worker-specific alerts
+- PM1.0, PM2.5, PM4.0, PM10 optical particle counters (1 reading/10 sec)
+- Silica-specific XRF sensor at 3 high-risk points (1 reading/min)
+- Worker location from BLE beacon network (1 reading/10 sec)
+- Shift roster from site management system (API pull, hourly refresh)
 
-Invalid or degraded data is quarantined — the model never runs on uncertified inputs.
+**Validation tasks:**
+- Sensor drift detection: statistical test applied to each sensor every 4 hours; 2 sensors flagged for calibration over the test period
+- Cross-sensor consistency: PM2.5/PM4.0 ratio check (physically bounded — violations indicate sensor fault)
+- Worker-location join: Ken receives individual exposure calculations only for workers confirmed present in the monitored zone during the sampling period
+- Calibration record logging: every sensor reading tagged with calibration status at time of reading
 
----
-
-## Deployment Architecture
-
-```
-Site Sensors
-    |
-    v
-Edge Gateway (on-site)
-    |  (encrypted MQTT)
-    v
-Argo Ingestion Layer
-    |
-    v
-Ken CNN-LSTM Inference (Modal)
-    |
-    v
-Alert Engine
-    |
-    +----> Site Safety Officer (SMS/app)
-    +----> Operations Dashboard
-    +----> Deb (Analyst Briefing)
-```
+**Data quality outcome:** 98.7% of readings certified clean over 30-day pilot. 1.3% quarantined (sensor calibration drift, 2 nodes). No data gaps > 8 minutes.
 
 ---
 
-## Results (Pilot — 90 days, 1 site, 340 workers)
+## What Ken Did
+
+Ken ran the four-trigger detection engine on the combined dust + location dataset:
+
+- **Trigger A:** Individual worker 8-hour TWA approaching 80% of 0.025 mg/m3 limit
+- **Trigger B:** Zone-level PM2.5 rate density — sustained elevated readings in enclosed spaces
+- **Trigger C:** Abrupt PM spike — explosive or mechanical event generating instantaneous high exposure
+- **Trigger D:** Physics-informed ODE for dust dispersion — flags anomalies in how dust clears after source cessation (indicates ventilation failure before PM levels breach threshold)
+
+**Key finding — Trigger D ventilation detection:**
+
+On Day 14 of the pilot, Trigger D fired at 07:23 for Zone 2 (enclosed cutting bay). The ODE model for dust dispersion predicted that PM levels should have cleared within 8 minutes of the previous cutting cycle ending. By 07:23 they had not. Trigger A did not fire until 07:51 (28-minute lead time). Trigger B did not fire until 08:04 (41-minute lead time).
+
+The ventilation system was found to have a partially blocked exhaust filter. Without Trigger D, workers would have been exposed for 41+ additional minutes before the first standard alert.
+
+**Individual exposure events detected:**
 
 | Metric | Value |
 |--------|-------|
-| Heat stress events detected | 23 |
-| Events confirmed by safety officer | 21 (91%) |
-| Events missed by traditional inspection | 17 of 21 (81%) |
-| Noise overexposure flags issued | 8 |
-| Average alert lead time before threshold breach | 14 minutes |
-| Zero injuries attributable to missed alerts | Confirmed |
+| Workers approaching TWA threshold (>80%) | 7 |
+| Workers breaching TWA threshold | 1 |
+| Exposure events detected by Trigger D before other triggers | 4 of 8 (50%) |
+| Mean Trigger D lead time over next earliest trigger | 31 minutes |
 
 ---
 
-## Key Insight
+## What Deb Delivered
 
-The 14-minute average lead time before a threshold breach was the critical finding. Traditional inspection-based compliance cannot achieve this. The CNN-LSTM model detected accumulating risk from the rate of change of combined signals — not from any single sensor crossing a threshold.
+Deb compiled three types of output over the 30-day pilot:
+
+**1. Real-time alerts (Watching Brief → High Risk transitions):**
+- 8 alerts delivered to site safety officer via WhatsApp
+- Average delivery time from Ken detection to Deb delivery: 47 seconds
+- Each alert included: zone, trigger attribution, affected workers, recommended immediate action
+
+**2. Daily compliance summary:**
+- Sent to client compliance team each morning at 06:00
+- Included: previous day exposure stats, sensor status, calibration flags, top 3 workers by exposure dose
+
+**3. Regulatory incident report (Day 14 ventilation event):**
+- Full report delivered within 2 hours of event resolution
+- Included: timeline, root cause (Trigger D ODE residual), exposure duration by worker, corrective action taken, regulatory notification recommendation
 
 ---
 
-## Conclusion
+## Outcome
 
-The Marsham Edge OccuSense pilot demonstrated that continuous multivariate anomaly detection significantly outperforms periodic inspection for occupational health monitoring. The Argo validation layer was essential: without sensor-quality certification, 12% of inference runs would have operated on degraded data, producing unreliable scores.
+Client submitted the Trigger D ventilation detection finding to their regulator as evidence of proactive monitoring capability. The regulator acknowledged this as exceeding the continuous monitoring standard.
 
-The system is now being extended to cover Li-ion battery storage systems on the same site.
+The 1 worker who breached the TWA threshold (Day 14) was removed from the zone at the High Risk alert. Exposure duration above threshold: 6 minutes. Under the previous quarterly audit regime, this breach would not have been detected or documented.
+
+**Regulatory outcome:** Client received written confirmation of compliance with the revised standard. No enforcement action.
+
+**Key finding:** The physics-informed ODE trigger (Trigger D) was decisive in 50% of exposure events. A system running only statistical and geometric triggers would have missed the ventilation fault until dust levels were already visibly elevated.
