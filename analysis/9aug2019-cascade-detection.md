@@ -117,7 +117,7 @@ The engine operates four independent triggers that can fire simultaneously or in
 
 **Empirical dataset:** For this analysis, the real 1-second frequency data was obtained from the **Power Grid Frequency Database** (LRydin/Power-Grid-Frequency, GitHub), which archives National Grid ESO open data. The specific file used: `greatbritain_2019_08.csv` (2,678,401 rows, full August 2019), accessed via OSF at https://osf.io/download/5ef285b5145b1a028052fda8/. Timestamps in the raw file are stored 1 hour behind UTC (BST handling artefact); a +1-hour correction was applied. The clean analysis window (`9aug2019_frequency_cascade.csv`) covers 16:50:00–17:04:59 UTC, 901 rows, 0.01 Hz precision.
 
-**Baseline calibration:** Trigger thresholds were derived from 153 seconds of pre-fault stable operation (16:50:00–16:52:32 UTC) in the same file — a quiet, low-variability window. A production deployment would calibrate on days or weeks of data with full operational variability. The 153-second baseline does not invalidate the detection result, but detection performance against a more varied baseline has not been characterised.
+**Baseline calibration:** Trigger thresholds were derived from a **24-hour pre-fault baseline** — 2019-08-08 16:52:33 UTC to 2019-08-09 16:52:32 UTC (86,400 data points). This baseline captures a full day of normal grid operation with representative variability, including demand cycles and routine dispatch events. The 24-hour calibration is appropriate for zero-shot demonstration purposes; a production deployment would use longer rolling baselines.
 
 ### 3.2 Zero-Shot Domain Transfer
 
@@ -134,29 +134,29 @@ Caveats that follow from this:
 
 The following results are empirical — derived from running the four-trigger engine on real 1-second frequency data (see Section 3.1).
 
-**Trigger thresholds (calibrated on 153s pre-fault baseline):**
-- A: 63 mHz (95th percentile envelope)
-- B: 7.7 mHz/s × 5 consecutive seconds
-- C: 6 mHz/s² (99th percentile second-derivative spike)
-- D: 36.1 mHz accumulated ODE residual over 3 seconds
+**Trigger thresholds (calibrated on 24-hour pre-fault baseline, 86,400 data points):**
+- A: 135 mHz (95th percentile envelope — reflects true normal grid swing over a full day)
+- B: 8.1 mHz/s × 5 consecutive seconds
+- C: 7 mHz/s² (99th percentile second-derivative spike)
+- D: 32.9 mHz accumulated ODE residual over 3 seconds
 
 | Trigger | Basis | Fires at | Lead before LFDD (48.8 Hz, T+75.9s) |
 |---|---|---|---|
 | **C** | Geometric second-derivative spike | T+1s | **75 seconds** |
 | **D** | ODE residual — swing equation physics | T+1s | **75 seconds** |
-| **A** | Frequency exits 95% envelope (63 mHz breach) | T+1s | **75 seconds** |
-| **→ Watching Brief [2/4]** | C + D + A simultaneously active (3 of 4 triggers at T+1s) | **T+1s** | **75 seconds** |
-| **→ High Risk [3/4]** | C + D + A simultaneously active | **T+1s** | **75 seconds** |
-| **B** | Sustained RoCoF threshold held (7.7 mHz/s × 5s) | T+5s | **71 seconds** |
+| **→ Watching Brief [2/4]** | C + D simultaneously active | **T+1s** | **75 seconds** |
+| **A** | Frequency exits 95% envelope (135 mHz breach) | T+2s | 74 seconds |
+| **→ High Risk [3/4]** | A joins C and D | T+2s | 74 seconds |
+| **B** | Sustained RoCoF threshold held (8.1 mHz/s × 5s) | T+5s | **71 seconds** |
 | **→ Critical Warning [4/4]** | All four triggers active | **T+5s** | **71 seconds** |
 
 **Headline figures:**
 - *Watching Brief* (first alert — 2/4 triggers): **75 seconds** before LFDD
 - *Critical Warning* (full confirmation — 4/4 triggers): **71 seconds** before LFDD
 
-**Note on the T+1s simultaneous firing:** Three triggers (C, D, A) fire simultaneously at T+1s — not two. The Watching Brief threshold requires ≥2 active triggers, so the engine enters that state at T+1s, but it enters it with three triggers already satisfied. The engine progresses through Watching Brief and High Risk in the same second. The fourth trigger (B, sustained RoCoF) confirms at T+5s.
+**Note on Trigger A timing:** Under the 24-hour baseline, the 95th percentile envelope threshold rises to 135 mHz (reflecting genuine normal grid variability across a full day, versus 63 mHz from the unusually quiet 153-second pre-event window). At T+1s the frequency deviation is −79 mHz — below the 24h threshold. By T+2s it reaches −230 mHz, clearing the threshold. Trigger A therefore fires at T+2s under 24h calibration rather than T+1s. The Watching Brief and Critical Warning headline timestamps are unaffected — C and D fire at T+1s regardless of baseline length, because the fault step (−5 to −79 mHz in one second) exceeds any reasonable characterisation of normal operation.
 
-The reason three triggers fire simultaneously is the extreme abruptness of the fault step: frequency fell from −5 mHz to −79 mHz in one second (a 74 mHz/s step), which is more abrupt than any swing-equation reconstruction of the event would assume. The second-derivative spike (C), ODE residual (D), and envelope breach (A) all respond to this instantaneous step together.
+**Robustness of the result:** The headline detection times are identical under both the 153-second and 24-hour baselines. The fault step was extreme enough that the second-derivative and ODE residual triggers fire on the first anomalous second regardless of how broadly normal operation is characterised.
 
 **Comparison with analytical reconstruction:**
 | Metric | Analytical (prior) | Empirical (this analysis) |
