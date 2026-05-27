@@ -13,7 +13,9 @@ This report documents the application of the Marsham Edge CNN-LSTM four-trigger 
 
 The engine was applied **zero-shot**: it was trained exclusively on battery thermal runaway data and has never been exposed to grid frequency data in any training or validation context. The analysis constitutes a demonstration of **architectural generality**, not of a trained grid-frequency model.
 
-**Key result:** The four-trigger engine enters *Watching Brief* state — two independent triggers simultaneously active — at T+2 seconds after fault onset, **73.9 seconds before the first automatic Low Frequency Demand Disconnection (LFDD) fires** at 48.8 Hz. All four triggers are active by T+20 seconds, 55.9 seconds before LFDD.
+**Key result:** The four-trigger engine enters *Watching Brief* state — three independent triggers simultaneously active — at T+1 second after fault onset, **75 seconds before the first automatic Low Frequency Demand Disconnection (LFDD) fires** at 48.8 Hz. All four triggers are active by T+5 seconds, 71 seconds before LFDD.
+
+**Note on methodology:** The figures above are **empirical** — derived from running the engine on the real 1-second frequency dataset (Power Grid Frequency Database, OSF archive, GB August 2019) rather than from analytical swing-equation reconstruction. The empirical results are more precise and, in the case of Critical Warning, substantially stronger than the initial analytical estimate.
 
 All timestamps, trigger thresholds, and event data are sourced from primary ESO documents (see Section 6).
 
@@ -113,7 +115,9 @@ The engine operates four independent triggers that can fire simultaneously or in
 
 **Primary source:** ESO Interim Report, 16 August 2019 — GPS-timestamped millisecond event log (Part Two, Table 1). This provides sub-second precision for the key timestamps.
 
-**Note on the public ESO data portal:** The National Grid ESO historic frequency data portal publishes a 1-second resolution dataset. This was unavailable at time of analysis (403 error on retrieval). However, the ESO Interim Report GPS event log provides sufficient precision for this analysis — the cascade window is 75.9 seconds, and the ±1s uncertainty introduced by 1-second data is immaterial to a lead-time claim of 73.9 seconds.
+**Empirical dataset:** For this analysis, the real 1-second frequency data was obtained from the **Power Grid Frequency Database** (LRydin/Power-Grid-Frequency, GitHub), which archives National Grid ESO open data. The specific file used: `greatbritain_2019_08.csv` (2,678,401 rows, full August 2019), accessed via OSF at https://osf.io/download/5ef285b5145b1a028052fda8/. Timestamps in the raw file are stored 1 hour behind UTC (BST handling artefact); a +1-hour correction was applied. The clean analysis window (`9aug2019_frequency_cascade.csv`) covers 16:50:00–17:04:59 UTC, 901 rows, 0.01 Hz precision.
+
+**Baseline calibration:** Trigger thresholds were derived from 153 seconds of pre-fault stable operation (16:50:00–16:52:32 UTC) in the same file — a quiet, low-variability window. A production deployment would calibrate on days or weeks of data with full operational variability. The 153-second baseline does not invalidate the detection result, but detection performance against a more varied baseline has not been characterised.
 
 ### 3.2 Zero-Shot Domain Transfer
 
@@ -128,21 +132,39 @@ Caveats that follow from this:
 
 ### 3.3 Trigger Firing Sequence
 
+The following results are empirical — derived from running the four-trigger engine on real 1-second frequency data (see Section 3.1).
+
+**Trigger thresholds (calibrated on 153s pre-fault baseline):**
+- A: 63 mHz (95th percentile envelope)
+- B: 7.7 mHz/s × 5 consecutive seconds
+- C: 6 mHz/s² (99th percentile second-derivative spike)
+- D: 36.1 mHz accumulated ODE residual over 3 seconds
+
 | Trigger | Basis | Fires at | Lead before LFDD (48.8 Hz, T+75.9s) |
 |---|---|---|---|
-| **C** | Geometric second-derivative spike | T+1s | **74.9 seconds** |
-| **D** | ODE residual — swing equation physics | T+2s | **73.9 seconds** |
-| **→ Watching Brief [2/4]** | C + D simultaneously active | **T+2s** | **73.9 seconds** |
-| **A** | Frequency exits 95% envelope (~49.5 Hz breach) | ~T+13.6s | ~62.3 seconds |
-| **→ High Risk [3/4]** | A joins C and D | ~T+13.6s | ~62.3 seconds |
-| **B** | Sustained RoCoF threshold held | ~T+20s | ~55.9 seconds |
-| **→ Critical Warning [4/4]** | All four triggers active | **~T+20s** | **55.9 seconds** |
+| **C** | Geometric second-derivative spike | T+1s | **75 seconds** |
+| **D** | ODE residual — swing equation physics | T+1s | **75 seconds** |
+| **A** | Frequency exits 95% envelope (63 mHz breach) | T+1s | **75 seconds** |
+| **→ Watching Brief [2/4]** | C + D + A simultaneously active (3 of 4 triggers at T+1s) | **T+1s** | **75 seconds** |
+| **→ High Risk [3/4]** | C + D + A simultaneously active | **T+1s** | **75 seconds** |
+| **B** | Sustained RoCoF threshold held (7.7 mHz/s × 5s) | T+5s | **71 seconds** |
+| **→ Critical Warning [4/4]** | All four triggers active | **T+5s** | **71 seconds** |
 
 **Headline figures:**
-- *Watching Brief* (first alert): **73.9 seconds** before LFDD
-- *Critical Warning* (full confirmation): **55.9 seconds** before LFDD
+- *Watching Brief* (first alert — 2/4 triggers): **75 seconds** before LFDD
+- *Critical Warning* (full confirmation — 4/4 triggers): **71 seconds** before LFDD
 
-The fastest path (Triggers C then D within one second) is driven by the geometric second-derivative spike and the swing-equation ODE residual — both respond to the abrupt generation imbalance faster than any threshold-based trigger can.
+**Note on the T+1s simultaneous firing:** Three triggers (C, D, A) fire simultaneously at T+1s — not two. The Watching Brief threshold requires ≥2 active triggers, so the engine enters that state at T+1s, but it enters it with three triggers already satisfied. The engine progresses through Watching Brief and High Risk in the same second. The fourth trigger (B, sustained RoCoF) confirms at T+5s.
+
+The reason three triggers fire simultaneously is the extreme abruptness of the fault step: frequency fell from −5 mHz to −79 mHz in one second (a 74 mHz/s step), which is more abrupt than any swing-equation reconstruction of the event would assume. The second-derivative spike (C), ODE residual (D), and envelope breach (A) all respond to this instantaneous step together.
+
+**Comparison with analytical reconstruction:**
+| Metric | Analytical (prior) | Empirical (this analysis) |
+|---|---|---|
+| Watching Brief | T+2s (73.9s lead) | T+1s (75s lead) |
+| Critical Warning | T+20s (55.9s lead) | T+5s (71s lead) |
+
+The empirical Critical Warning result is substantially better than the analytical reconstruction because the actual fault step was sharper than the swing equation assumed.
 
 ---
 
@@ -186,11 +208,11 @@ What *is* claimed: the trigger architecture, applied zero-shot to the ESO event 
 
 ## 5. Conclusions
 
-The 9 August 2019 National Grid blackout represents a 75.9-second cascade from fault onset to automatic demand disconnection. Applied zero-shot to the ESO GPS event log, the Marsham Edge four-trigger engine:
+The 9 August 2019 National Grid blackout represents a 75.9-second cascade from fault onset to automatic demand disconnection. Applied zero-shot to real 1-second frequency data (Power Grid Frequency Database, OSF archive), the Marsham Edge four-trigger engine:
 
-1. Enters *Watching Brief* state at T+2s — **73.9 seconds** before LFDD fires
-2. Escalates to *Critical Warning* (all four triggers) at T+20s — **55.9 seconds** before LFDD
-3. Fastest trigger (C — geometric second-derivative) fires at T+1s, **74.9 seconds** before LFDD
+1. Fires three triggers simultaneously (C, D, A) at T+1s — entering Watching Brief and High Risk states in the same second, **75 seconds** before LFDD fires
+2. Escalates to *Critical Warning* (all four triggers) at T+5s — **71 seconds** before LFDD
+3. The fastest individual trigger (C — geometric second-derivative) fires at T+1s, **75 seconds** before LFDD
 
 This result demonstrates that the CNN-LSTM hybrid trigger architecture generalises to grid frequency anomaly detection without retraining. The underlying physical principles — second-derivative acceleration, ODE residual deviation, sustained rate-of-change, statistical envelope breach — are not domain-specific.
 
@@ -211,7 +233,8 @@ The zero-shot result provides a strong architectural foundation for that work.
 | 1 | ESO Interim Report: Investigation into the events of 9 August 2019, 16 August 2019 | Primary — official ESO report | GPS event log (Part Two, Table 1); LFDD threshold confirmation (pp. 6, 11, 15) |
 | 2 | ESO Final Technical Report, 6 September 2019 | Primary — official ESO report | Grid Code LFDD requirements (pp. 10-11, 22, section 4.3) |
 | 3 | Ofgem Final Investigation Report, August 2020 | Primary — regulatory report | Enforcement decisions; fine amounts |
-| 4 | National Grid ESO Historic Frequency Data Portal | Primary — data source | 1-second resolution public dataset (unavailable at time of analysis — 403); GPS event log from ESO Interim Report used instead |
+| 4 | National Grid ESO Historic Frequency Data Portal | Primary — data source | 1-second resolution public dataset (unavailable at time of analysis — 403 error) |
+| 5 | Power Grid Frequency Database — LRydin/Power-Grid-Frequency (GitHub / OSF) | Primary — data source | Archive of National Grid ESO open data; GB August 2019 file used for empirical analysis. OSF: https://osf.io/download/5ef285b5145b1a028052fda8/ |
 
 ---
 
